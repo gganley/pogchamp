@@ -1,0 +1,17 @@
+{
+	  "libs" : [
+		    "browser",
+		    "jquery",
+        "irc",
+        "express",
+        "crypto",
+        "simple-oauth2"
+	  ],
+	  "loadEagerly": [ "js/*.js", "*.js" ],
+	  "plugins" : {
+		    "commonjs" : {},
+		    "node" : {},
+		    "requirejs" : {},
+		    "node_resolve" : {}
+	  }
+}
