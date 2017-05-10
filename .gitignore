@@ -38,3 +38,6 @@ jspm_packages
 
 # Planning files
 *.org
+
+# Project file
+.tern_project
