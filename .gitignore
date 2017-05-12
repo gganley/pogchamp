@@ -41,3 +41,4 @@ jspm_packages
 
 # Project file
 .tern_project
+data/
