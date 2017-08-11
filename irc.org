@@ -1,5 +1,6 @@
-// #! /usr/bin/env node
-'use strict';
+* Imports
+#+BEGIN_SRC js :tangle yes
+var sys = require('util');
 const assert = require('assert');
 const oauth2_library = require('simple-oauth2');
 const crypto = require('crypto');
@@ -10,14 +11,19 @@ const timer = require('timers');
 const qs = require('querystring');
 const opn = require('opn');
 const MongoClient = require('mongodb').MongoClient;
+const Server = require('mongodb').Server;
 const csvWriter = require('csv-write-stream');
 const fs = require('fs');
+#+END_SRC
 
-const url = 'mongodb://localhost:27017/pogchamp';
-var app = express();
+#+RESULTS:
+:RESULTS:
+:END:
 
+* Constants
+#+BEGIN_SRC js :tangle yes
+const url = 'mongodb://gganley:kingfish@localhost:27017/pogchamp?authSource=admin&poolSize=200';
 const redirectUrl = 'http://localhost:3000/callback';
-
 // This is for debugging purposes because I'm a terrible developer
 const mongo = true;
 const running = true;
@@ -25,8 +31,8 @@ const running = true;
 // Init oauth2 w/ redentials
 const credentials = {
     client: {
-        id: '91la4bl9262yb59qfam5j9fkh8uonmn',
-        secret: 'cnvgyol1tcteo580koumxb8ronfikv'
+        id: '2hhgurv89qbh5tvj7vban6nni4w4po',
+        secret: 'mvib36dgdxtz8j33ogdp8qivzy3qn5'
     },
     auth: {
         tokenHost: 'https://api.twitch.tv',
@@ -44,6 +50,13 @@ var authorizationUri = oauth2.authorizationCode.authorizeURL({
     redirect_uri: redirectUrl,
     scope: 'chat_login'
 });
+#+END_SRC
+
+#+RESULTS:
+
+* Express configuration
+#+BEGIN_SRC js :tangle yes
+var app = express();
 
 /*
   Express routes
@@ -87,6 +100,12 @@ app.get('/callback', (req, res) => {
 // Start server and listen on port 3000
 app.listen(3000);
 
+
+#+END_SRC
+
+* Twitch API calls
+- There may come a point in time where I change these over to tmi.js calls but that time is not now
+#+BEGIN_SRC js :tangle yes
 /*
   Baron wasteland of Twitch API functions
 */
@@ -95,6 +114,7 @@ app.listen(3000);
 function getStreamObject(chid) {
     return request.get({
         url: "https://api.twitch.tv/kraken/streams/" + chid,
+   //     fullResponse: false,
         headers: {
             'Client-ID': credentials.client.id,
             'Accept': 'application/vnd.twitchtv.v5+json'
@@ -106,11 +126,12 @@ function getStreamObject(chid) {
 function getVideosObject(chid) {
     return request.get({
         url: "https://api.twitch.tv/kraken/channels/" + chid + '/videos',
+        // fullResponse: false,
         headers: {
             'Client-ID': credentials.client.id,
             'Accept': 'application/vnd.twitchtv.v5+json'
         }
-    }).then(JSON.parse);
+    }).catch(err => {console.error(err, chid);}).then(JSON.parse);
 }
 
 // Uses the getVideosObject to get a single broadcast
@@ -125,46 +146,47 @@ function getBroadcastObject(chid, bid) {
 function getChannelID(channel) {
     return request.get({
         url: "https://api.twitch.tv/kraken/users?login=" + channel,
+        // fullResponse: false,
         headers: {
             'Client-ID': credentials.client.id,
             'Accept': 'application/vnd.twitchtv.v5+json'
         }
-    }).then(JSON.parse).then((channelObject) => {
-        return channelObject.users[0]._id;
-    });
+    }).then(JSON.parse).then(obj => {return obj.users[0]._id;});
 }
 
 function getChannelName(chid) {
     return request.get({
         url: "https://api.twitch.tv/kraken/channels/" + chid,
+        // fullResponse: false,
         headers: {
             'Client-ID': credentials.client.id,
             'Accept': 'application/vnd.twitchtv.v5+json'
         }
-    }).then(JSON.parse).then((streamObject) => {
+    }).catch(err => {console.error(err, chid);}).then(JSON.parse).then((streamObject) => {
         return streamObject.name;
     });
 }
 
 // TODO I think this can be done in a much cleaner way, something like stream.stream_type
 function isLive(chid) {
-    return getCurrentStreamObject(chid).then((obj) => {
+    return getStreamObject(chid).catch(err => {console.error(err, chid);}).then((obj) => {
         return obj.stream ? true : false;
-    });
+    }).catch(err => {console.error(err, chid);});
 }
 
 // Get top 10 chin's in relation to viewers
 function topChins() {
     return request.get({
         url: "https://api.twitch.tv/kraken/streams" + '?' + qs.stringify({
-            limit: 10,
+            limit: 3,
             language: 'en'
         }),
+        // fullResponse: false,
         headers: {
             'Client-ID': credentials.client.id,
             'Accept': 'application/vnd.twitchtv.v5+json'
         }
-    }).then(JSON.parse).then(function(info) {
+    }).catch(err => {console.error(err);}).then(JSON.parse).then(function(info) {
         return info.streams.map((stream) => {
             return stream.channel._id;
         });
@@ -179,27 +201,14 @@ function topChannels() {
         return Promise.all(obj);
     });
 }
+#+END_SRC
 
-// TODO test this function
-function logUsingMongo(bid, chid, channelName, message) {
-    MongoClient.connect(url, function(err, db) {
-            db.collection(channelName).insertOne({
-                bid,
-                chid,
-                time: Math.round(+new Date()/1000),
-                message
-            }, (err, result) => {
-                assert.equal(null,err);
-                db.close();
-            });
-    });
-}
+* Program logic
+** TODO create a better way of describing this section
 
-function getBroadcastDatabase(bid) {
-    MongoClient.connect(url, (err, db) => {
-        return db.collection('broadcasts').find({bid}, {db: 1});
-    });
-}
+#+BEGIN_SRC js :tangle yes
+
+var obj = [];
 
 // Function run after user credentials are received by the server
 function gotToken(token) {
@@ -207,50 +216,29 @@ function gotToken(token) {
         // Options for the twitch IRC
         var options = {
             options: {
-                debug: true
+                debug: false
             },
             connection: {
                 reconnect: true
             },
             identity: {
-                username: "gganley1",
+                username: "ganleybot",
                 password: "oauth:" + token.token.access_token
             }
         };
 
+        console.log(token);
+
         // connect to IRC server
         var client = new tmi.client(options);
         client.connect();
-
         // Log chat to mongo
         client.on("chat", function(channel, userstate, message, self) {
             if (self) return;
-            getChannelID(channel.slice(1)).then(getStreamObject).then(streamObject => {
-                if (mongo) {
-                    MongoClient.connect(url, function(err, db) {
-                        if (err) {
-                            throw(err);
-                        } else {
-                            db.collection(channel.slice(1)).insertOne({
-                                bid: streamObject.stream._id,
-                                chid: streamObject.stream.channel._id,
-                                time: Math.round(+new Date()/1000),
-                                message
-                            }, (err, result) => {
-                                if (err) {
-                                    throw(err);
-                                } else {
-                                    assert.equal(null,err);
-                                    db.close();
-                                }
-                            });
-                        }
-                    });
-                } else {
-                    fs.appendFile(channel.slice(1) + '-' + streamObject.stream._id + '.csv', Date.now() + ',' + message + '\n', err => {
-                        if (err) throw err;
-                    });
-                }
+            getChannelID(channel.slice(1)).then(getStreamObject).then(strobj => {
+                obj.push({chid: strobj.stream.channel._id,
+                          bid: strobj.stream._id,
+                          message});
             });
         });
 
@@ -258,8 +246,9 @@ function gotToken(token) {
         timer.setInterval(() => {
             topChannels().then(topLiveChannels => {
                 var joinedChannels = client.getChannels();
-                for (var i = 0; i < 10; i++) {
+                for (var i = 0; i < 3; i++) {
                     if (joinedChannels.indexOf('#' + topLiveChannels[i]) == -1) {
+                        console.log('#' + topLiveChannels[i]);
                         client.join('#' + topLiveChannels[i]);
                     }
                 }
@@ -267,12 +256,30 @@ function gotToken(token) {
                 // Get channels again because new channels could have been joined
                 joinedChannels = client.getChannels();
                 Promise.all(joinedChannels.map(channel => {
-                    isLive(channel.slice(1)).then(truthValue => {
-                        if (!truthValue)
+                    getChannelID(channel.slice(1)).then(isLive).then(truthValue => {
+                        if (!truthValue) {
+                            console.log(channel);
                             client.part(channel);
+                        }
                     });
-                }));n
+                }));
             });
-        }, 1000);
+        }, 10000);
+        timer.setInterval(() => {
+            console.log(obj);
+            MongoClient.connect(url, function(err,db) {
+                assert.equal(null, err);
+                db.collection('messages').insertMany(obj).then(function(err, result) {
+                    assert.equal(null,err);
+                    db.close();
+                    obj = [];
+                });
+            });
+        }, 2000);
     }
 }
+
+#+END_SRC
+
+#+RESULTS:
+: undefined
